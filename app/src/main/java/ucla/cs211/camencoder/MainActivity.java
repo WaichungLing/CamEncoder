@@ -3,12 +3,17 @@ package ucla.cs211.camencoder;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.ImageFormat;
 import android.hardware.Camera;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.provider.MediaStore;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -128,17 +133,30 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
 
         // TODO: to be deleted when final releasing
         // save to stream video
-        File path = mContext.getExternalFilesDir(Environment.DIRECTORY_MOVIES).getAbsoluteFile();
-        if (!path.mkdirs()) {
-            Log.e(TAG, "Directory not created");
-            return;
-        }
-        file = new File(path, "encoded.h264");
-        if (fos == null){
-            fos = new FileOutputStream(file, false);
-        }else{
-            Log.e(TAG, "[startStream]: fos existed");
-            throw new RuntimeException("[startStream]: fos existed");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q){
+            Log.i(TAG, "Set up output stream: new");
+            ContentResolver resolver = getContentResolver();
+            ContentValues contentValues = new ContentValues();
+            contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, "encoded.h264");
+            contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "video/avc");
+            contentValues.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES+File.separator+"camEncoder");
+            Uri uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, contentValues);
+
+            fos = (FileOutputStream) resolver.openOutputStream(uri);
+        } else {
+            Log.i(TAG, "Set up output stream: old");
+            File path = new File(String.valueOf(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)));
+            if (!path.mkdirs()) {
+                Log.e(TAG, "Directory not created");
+                return;
+            }
+            file = new File(path, "encoded.h264");
+            if (fos == null){
+                fos = new FileOutputStream(file, false);
+            }else{
+                Log.e(TAG, "[startStream]: fos existed");
+                throw new RuntimeException("[startStream]: fos existed");
+            }
         }
 
     }
