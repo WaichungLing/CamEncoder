@@ -20,6 +20,7 @@ import android.view.SurfaceView;
 import android.view.View;
 import android.view.Window;
 import android.widget.Button;
+import android.widget.TextView;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -36,7 +37,7 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     private static int SP_CAM_WIDTH = 0;
     private static int SP_CAM_HEIGHT = 0;
 
-    private final static int DEFAULT_FRAME_RATE = 15;
+    private final static int DEFAULT_FRAME_RATE = 30;
     private final static int DEFAULT_BIT_RATE = 500000;
 
     Camera camera;
@@ -51,6 +52,9 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     //TODO: Debugging, remove before final release
     File file;
     FileOutputStream fos;
+    long startTime = -1;
+    int encodedSize;
+    TextView textView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -84,6 +88,7 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
                 });
 
         svCameraPreview = (SurfaceView) this.findViewById(R.id.svCameraPreview);
+        textView = (TextView) this.findViewById(R.id.textView);
         this.previewHolder = svCameraPreview.getHolder();
         this.previewHolder.addCallback(this);
     }
@@ -93,10 +98,22 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
         // Camera size width: 1920, height 932
         this.camera.addCallbackBuffer(this.previewBuffer);
 
+        if (startTime == -1){
+            startTime = System.currentTimeMillis();
+            encodedSize = 0;
+        }
+
         if (this.isStreaming){
-            Log.i(TAG, "streaming; byte size = " + bytes.length);
             byte[] encData = this.encoder.offerEncoder(bytes);
-            Log.i(TAG, "Encoded size = " + encData.length);
+            Log.i(TAG, "streaming; byte size = " + bytes.length + " --> Encoded size = " + encData.length);
+
+            encodedSize += encData.length;
+            long currentTime = System.currentTimeMillis();
+            double duration = ((double)(currentTime - startTime)) / 1000;
+            double requiredBW = (encodedSize / duration) / 1024;   //Measured in KBps
+            Log.i(TAG, "Required Bandwidth is: " + String.format("%,.2f", requiredBW));
+            textView.setText(String.format("%,.2f", requiredBW)+"KB/s");
+
             if (encData.length > 0)
             {
                 synchronized(this.encDataList)
@@ -137,7 +154,7 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
             Log.i(TAG, "Set up output stream: new");
             ContentResolver resolver = getContentResolver();
             ContentValues contentValues = new ContentValues();
-            contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, "encoded.h264");
+            contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, "encoded"+startTime+".h264");
             contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "video/avc");
             contentValues.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES+File.separator+"camEncoder");
             Uri uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, contentValues);
@@ -150,7 +167,7 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
                 Log.e(TAG, "Directory not created");
                 return;
             }
-            file = new File(path, "encoded.h264");
+            file = new File(path, "encoded"+startTime+".h264");
             if (fos == null){
                 fos = new FileOutputStream(file, false);
             }else{
