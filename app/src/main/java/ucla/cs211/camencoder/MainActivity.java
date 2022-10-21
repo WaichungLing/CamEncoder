@@ -30,6 +30,7 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 public class MainActivity extends AppCompatActivity implements SurfaceHolder.Callback, Camera.PreviewCallback {
     private final static String TAG = MainActivity.class.getSimpleName();
@@ -37,7 +38,8 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     private static int SP_CAM_WIDTH = 0;
     private static int SP_CAM_HEIGHT = 0;
 
-    private final static int DEFAULT_FRAME_RATE = 30;
+    private final static int DEFAULT_FRAME_RATE = 15;
+    private final static int DEFAULT_CAMERA_RATE = 26;
     private final static int DEFAULT_BIT_RATE = 500000;
 
     Camera camera;
@@ -46,6 +48,7 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     SurfaceView svCameraPreview;
     byte[] previewBuffer;
     boolean isStreaming = false;
+    Random r = new Random();
     AvcEncoder encoder;
     ArrayList<byte[]> encDataList = new ArrayList<byte[]>();
 
@@ -54,7 +57,12 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     FileOutputStream fos;
     long startTime = -1;
     int encodedSize;
+    int frameCount;
+    int onPreviewCount;
     TextView textView;
+    TextView averageSizeView;
+    TextView encRateView;
+    TextView onPreviewRateView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -88,9 +96,14 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
                 });
 
         svCameraPreview = (SurfaceView) this.findViewById(R.id.svCameraPreview);
-        textView = (TextView) this.findViewById(R.id.textView);
         this.previewHolder = svCameraPreview.getHolder();
         this.previewHolder.addCallback(this);
+
+        // TODO: debugger
+        textView = (TextView) this.findViewById(R.id.textView);
+        averageSizeView = (TextView) this.findViewById(R.id.textView2);
+        encRateView = (TextView) this.findViewById(R.id.textView4);
+        onPreviewRateView = (TextView) this.findViewById(R.id.textView3);
     }
 
     @Override
@@ -101,30 +114,51 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
         if (startTime == -1){
             startTime = System.currentTimeMillis();
             encodedSize = 0;
+            frameCount = 0;
+            onPreviewCount = 0;
         }
+
+        long currentTime = System.currentTimeMillis();
+        double duration = ((double)(currentTime - startTime)) / 1000;
+
+        // Congestion Control
+        if (frameCount/duration > DEFAULT_FRAME_RATE){
+            int coin = r.nextInt(DEFAULT_CAMERA_RATE+1);
+            if (coin > DEFAULT_FRAME_RATE ){
+                return;
+            }
+        }
+
+        onPreviewCount++;
 
         if (this.isStreaming){
             byte[] encData = this.encoder.offerEncoder(bytes);
             Log.i(TAG, "streaming; byte size = " + bytes.length + " --> Encoded size = " + encData.length);
 
             encodedSize += encData.length;
-            long currentTime = System.currentTimeMillis();
-            double duration = ((double)(currentTime - startTime)) / 1000;
+
             double requiredBW = (encodedSize / duration) / 1024;   //Measured in KBps
             Log.i(TAG, "Required Bandwidth is: " + String.format("%,.2f", requiredBW));
             textView.setText(String.format("%,.2f", requiredBW)+"KB/s");
+            double avgPreviewCount = onPreviewCount / duration;
+            onPreviewRateView.setText("Preview:"+String.format("%,.2f", avgPreviewCount)+"/s");
+            if (encData.length > 0){
+                frameCount++;
+                double avgSize = encodedSize/frameCount;
+                averageSizeView.setText(String.format("%,.2f", avgSize)+"bytes");
+                double avgEncDataRate = frameCount/duration;
+                encRateView.setText("Encoded: "+ String.format("%,.2f", avgEncDataRate)+"/s");
+            }
 
-            if (encData.length > 0)
-            {
-                synchronized(this.encDataList)
-                {
+            if (encData.length > 0) {
+                synchronized(this.encDataList) {
                     try {
                         fos.write(encData);
                     } catch (IOException e) {
                         Log.e(TAG, "[onPreviewFrame]: write to file failed");
                         e.printStackTrace();
                     }
-                    this.encDataList.add(encData);
+                    //this.encDataList.add(encData);
                 }
             }
         }
@@ -181,6 +215,7 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     private void stopStream() throws IOException {
         fos.close();
         encoder.close();
+        startTime = -1;
     }
 
     private void startCamera() {
