@@ -116,30 +116,32 @@ public class AvcEncoder {
                 byte[] outData = new byte[bufferInfo.size];  
                 outputBuffer.get(outData);  
                   
-                if (spsPpsInfo == null) {
-                    ByteBuffer spsPpsBuffer = ByteBuffer.wrap(outData);    
-                    if (spsPpsBuffer.getInt() == 0x00000001) {
-                        spsPpsInfo = new byte[outData.length];  
-                        System.arraycopy(outData, 0, spsPpsInfo, 0, outData.length);
-                        Log.i(TAG, "SPS info size: " + spsPpsInfo.length + " content: "+spsPpsInfo);
-                    }   
-                    else {
-                    	return null;  
-                    }  
-                } else {
-                	outputStream.write(outData);
-                }  
+//                if (spsPpsInfo == null) {
+//                    ByteBuffer spsPpsBuffer = ByteBuffer.wrap(outData);
+//                    if (spsPpsBuffer.getInt() == 0x00000001) {
+//                        spsPpsInfo = new byte[outData.length];
+//                        System.arraycopy(outData, 0, spsPpsInfo, 0, outData.length);
+//                        Log.i(TAG, "SPS info size: " + spsPpsInfo.length + " content: "+spsPpsInfo);
+//                    }
+//                    else {
+//                    	return null;
+//                    }
+//                } else {
+//                	outputStream.write(outData);
+//                }
+
+                outputStream.write(outData);
                   
                 mediaCodec.releaseOutputBuffer(outputBufferIndex, false);  
                 outputBufferIndex = mediaCodec.dequeueOutputBuffer(bufferInfo, timeoutUSec);  
             }  
             byte[] ret = outputStream.toByteArray();
-            if (ret.length > 5 && ret[4] == 0x65) //key frame need to add sps pps
-            {            	
-                outputStream.reset();
-                outputStream.write(spsPpsInfo);
-                outputStream.write(ret);
-            }  
+//            if (ret.length > 5 && ret[4] == 0x65) //key frame need to add sps pps
+//            {
+//                outputStream.reset();
+//                outputStream.write(spsPpsInfo);
+//                outputStream.write(ret);
+//            }
               
         }
         catch (Throwable t) {

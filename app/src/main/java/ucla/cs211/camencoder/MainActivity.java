@@ -10,6 +10,7 @@ import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.ImageFormat;
 import android.graphics.PixelFormat;
+import android.graphics.SurfaceTexture;
 import android.hardware.Camera;
 import android.net.Uri;
 import android.os.Build;
@@ -51,6 +52,7 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     Context mContext;
     SurfaceHolder previewHolder;
     SurfaceView svCameraPreview;
+    SurfaceTexture svCameraTexture;
     byte[] previewBuffer;
     boolean isStreaming = false;
     Random r = new Random();
@@ -68,7 +70,6 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     TextView averageSizeView;
     TextView encRateView;
     TextView onPreviewRateView;
-    FileOutputStream ofos;
     AvcDecoder decoder;
     SurfaceView decodeSurfacePreview;
 
@@ -104,6 +105,7 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
                 });
 
         svCameraPreview = (SurfaceView) this.findViewById(R.id.svCameraPreview);
+        svCameraTexture = new SurfaceTexture(10);
         this.previewHolder = svCameraPreview.getHolder();
         this.previewHolder.addCallback(this);
 
@@ -116,17 +118,15 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
         decodeSurfacePreview.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override
             public void surfaceCreated(@NonNull SurfaceHolder surfaceHolder) {
-                decoder.setSurface(surfaceHolder.getSurface());
             }
 
             @Override
             public void surfaceChanged(@NonNull SurfaceHolder surfaceHolder, int i, int i1, int i2) {
-                decoder.setSurface(surfaceHolder.getSurface());
             }
 
             @Override
             public void surfaceDestroyed(@NonNull SurfaceHolder surfaceHolder) {
-
+                decoder.close();
             }
         });
 
@@ -147,16 +147,15 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
 
         long currentTime = System.currentTimeMillis();
         double duration = ((double)(currentTime - startTime)) / 1000;
+        onPreviewCount++;
 
         // Congestion Control
         if (frameCount/duration > DEFAULT_FRAME_RATE){
-            int coin = r.nextInt((int) (onPreviewCount/duration));
-            if (coin >= DEFAULT_FRAME_RATE){
+            int coin = r.nextInt((int) (onPreviewCount/duration)+1);
+            if (coin >= DEFAULT_FRAME_RATE-1){
                 return;
             }
         }
-
-        onPreviewCount++;
 
         if (this.isStreaming){
             byte[] encData = this.encoder.offerEncoder(bytes);
@@ -197,7 +196,8 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     }
 
     @Override
-    public void surfaceChanged(@NonNull SurfaceHolder surfaceHolder, int i, int i1, int i2) {}
+    public void surfaceChanged(@NonNull SurfaceHolder surfaceHolder, int i, int i1, int i2) {
+    }
 
     @Override
     public void surfaceDestroyed(@NonNull SurfaceHolder surfaceHolder) {
@@ -237,7 +237,7 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
 
 
         decoder = new AvcDecoder();
-        decoder.init(SP_CAM_WIDTH, SP_CAM_HEIGHT);
+        decoder.init(SP_CAM_WIDTH, SP_CAM_HEIGHT, decodeSurfacePreview.getHolder().getSurface());
 
         decodeThread.start();
     }
@@ -280,7 +280,8 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
         try {
             camera = Camera.open();
             camera.setDisplayOrientation(90);
-            camera.setPreviewDisplay(this.previewHolder);
+            //camera.setPreviewDisplay(this.previewHolder);
+            camera.setPreviewTexture(svCameraTexture);
             Camera.Parameters params = camera.getParameters();
             params.setPreviewSize(SP_CAM_WIDTH, SP_CAM_HEIGHT);
             params.setPreviewFormat(ImageFormat.YV12);
@@ -310,7 +311,7 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
         @Override
         public void run() {
             // TODO: Setting decode view on top, remove when release
-            decodeSurfacePreview.setZOrderMediaOverlay(true);
+            decodeSurfacePreview.setZOrderOnTop(true);
             if (decoder != null){
                 while (true) {
                     if (!encDataList.isEmpty()) {
@@ -320,12 +321,6 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
 
                             byte[] decoded = decoder.offerDecoder(current);
                             Log.d("Decode", "Decoding; decoded frame size: " + decoded.length);
-//                            try {
-//                                ofos.write(decoded);
-//                            } catch (IOException e) {
-//                                Log.e(TAG, String.valueOf(e));
-//                                break;
-//                            }
 
                         }
                     }
