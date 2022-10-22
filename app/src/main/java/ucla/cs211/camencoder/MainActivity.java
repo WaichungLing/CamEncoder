@@ -7,7 +7,9 @@ import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
 import android.graphics.ImageFormat;
+import android.graphics.PixelFormat;
 import android.hardware.Camera;
 import android.net.Uri;
 import android.os.Build;
@@ -15,6 +17,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Log;
+import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
@@ -28,8 +31,11 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Queue;
 import java.util.Random;
 
 public class MainActivity extends AppCompatActivity implements SurfaceHolder.Callback, Camera.PreviewCallback {
@@ -39,7 +45,6 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     private static int SP_CAM_HEIGHT = 0;
 
     private final static int DEFAULT_FRAME_RATE = 15;
-    private final static int DEFAULT_CAMERA_RATE = 26;
     private final static int DEFAULT_BIT_RATE = 500000;
 
     Camera camera;
@@ -50,7 +55,7 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     boolean isStreaming = false;
     Random r = new Random();
     AvcEncoder encoder;
-    ArrayList<byte[]> encDataList = new ArrayList<byte[]>();
+    LinkedList<byte[]> encDataList = new LinkedList<>();
 
     //TODO: Debugging, remove before final release
     File file;
@@ -63,6 +68,9 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     TextView averageSizeView;
     TextView encRateView;
     TextView onPreviewRateView;
+    FileOutputStream ofos;
+    AvcDecoder decoder;
+    SurfaceView decodeSurfacePreview;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -104,6 +112,25 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
         averageSizeView = (TextView) this.findViewById(R.id.textView2);
         encRateView = (TextView) this.findViewById(R.id.textView4);
         onPreviewRateView = (TextView) this.findViewById(R.id.textView3);
+        decodeSurfacePreview = findViewById(R.id.decodePreview);
+        decodeSurfacePreview.getHolder().addCallback(new SurfaceHolder.Callback() {
+            @Override
+            public void surfaceCreated(@NonNull SurfaceHolder surfaceHolder) {
+                decoder.setSurface(surfaceHolder.getSurface());
+            }
+
+            @Override
+            public void surfaceChanged(@NonNull SurfaceHolder surfaceHolder, int i, int i1, int i2) {
+                decoder.setSurface(surfaceHolder.getSurface());
+            }
+
+            @Override
+            public void surfaceDestroyed(@NonNull SurfaceHolder surfaceHolder) {
+
+            }
+        });
+
+
     }
 
     @Override
@@ -123,8 +150,8 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
 
         // Congestion Control
         if (frameCount/duration > DEFAULT_FRAME_RATE){
-            int coin = r.nextInt(DEFAULT_CAMERA_RATE+1);
-            if (coin > DEFAULT_FRAME_RATE ){
+            int coin = r.nextInt((int) (onPreviewCount/duration));
+            if (coin >= DEFAULT_FRAME_RATE){
                 return;
             }
         }
@@ -158,7 +185,7 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
                         Log.e(TAG, "[onPreviewFrame]: write to file failed");
                         e.printStackTrace();
                     }
-                    //this.encDataList.add(encData);
+                    this.encDataList.add(encData);
                 }
             }
         }
@@ -183,9 +210,8 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
         this.encoder.init(SP_CAM_WIDTH, SP_CAM_HEIGHT, DEFAULT_FRAME_RATE, DEFAULT_BIT_RATE);
 
         // TODO: to be deleted when final releasing
-        // save to stream video
+        // save encoded video
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q){
-            Log.i(TAG, "Set up output stream: new");
             ContentResolver resolver = getContentResolver();
             ContentValues contentValues = new ContentValues();
             contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, "encoded"+startTime+".h264");
@@ -195,7 +221,6 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
 
             fos = (FileOutputStream) resolver.openOutputStream(uri);
         } else {
-            Log.i(TAG, "Set up output stream: old");
             File path = new File(String.valueOf(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)));
             if (!path.mkdirs()) {
                 Log.e(TAG, "Directory not created");
@@ -210,6 +235,11 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
             }
         }
 
+
+        decoder = new AvcDecoder();
+        decoder.init(SP_CAM_WIDTH, SP_CAM_HEIGHT);
+
+        decodeThread.start();
     }
 
     private void stopStream() throws IOException {
@@ -236,6 +266,9 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
         // Preview holder need swap the height and width because of the orientation
         this.previewHolder.setFixedSize(SP_CAM_HEIGHT, SP_CAM_WIDTH);
         Log.i(TAG, "previewHolder: width is: "+SP_CAM_HEIGHT + " height is: " + SP_CAM_WIDTH);
+
+        // TODO: remove decode surface
+        decodeSurfacePreview.getHolder().setFixedSize(SP_CAM_WIDTH/2, SP_CAM_HEIGHT/2);
 
         int stride = (int) Math.ceil(SP_CAM_WIDTH/16.0f) * 16;
         int cStride = (int) Math.ceil(SP_CAM_WIDTH/32.0f)  * 16;
@@ -272,4 +305,32 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
             camera = null;
         }
     }
+
+    Thread decodeThread = new Thread(new Runnable() {
+        @Override
+        public void run() {
+            // TODO: Setting decode view on top, remove when release
+            decodeSurfacePreview.setZOrderMediaOverlay(true);
+            if (decoder != null){
+                while (true) {
+                    if (!encDataList.isEmpty()) {
+                        synchronized (encDataList) {
+                            byte[] current = encDataList.peek();
+                            encDataList.poll();
+
+                            byte[] decoded = decoder.offerDecoder(current);
+                            Log.d("Decode", "Decoding; decoded frame size: " + decoded.length);
+//                            try {
+//                                ofos.write(decoded);
+//                            } catch (IOException e) {
+//                                Log.e(TAG, String.valueOf(e));
+//                                break;
+//                            }
+
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
